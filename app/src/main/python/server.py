@@ -11,17 +11,10 @@ if work_dir not in sys.path:
 
 db_path = os.path.join(work_dir, "tracker.db")
 
-API_ID = 0
-API_HASH = ""
-ADMIN_ID = 846768993
-
-try:
-    import tg_creds
-    API_ID = getattr(tg_creds, 'API_ID', 0)
-    API_HASH = getattr(tg_creds, 'API_HASH', '')
-    ADMIN_ID = getattr(tg_creds, 'ADMIN_ID', 846768993)
-except Exception:
-    pass
+import tg_creds
+API_ID = getattr(tg_creds, "API_ID", None)
+API_HASH = getattr(tg_creds, "API_HASH", None)
+ADMIN_ID = getattr(tg_creds, "ADMIN_ID", 846768993)
 
 routes = web.RouteTableDef()
 pyro_client = None
@@ -29,28 +22,24 @@ pyro_client = None
 def get_raw_db():
     return sqlite3.connect(db_path)
 
-@routes.get('/')
-@routes.get('/index.html')
+@routes.get("/")
+@routes.get("/index.html")
 async def index_handler(request):
-    html_file = os.path.join(work_dir, "index.html")
-    if os.path.exists(html_file):
-        return web.FileResponse(html_file)
-    return web.Response(text="index.html not found", status=404)
+    f = os.path.join(work_dir, "index.html")
+    return web.FileResponse(f) if os.path.exists(f) else web.Response(text="not found", status=404)
 
-# КАТАЛОГ ФИЛЬМОВ
-@routes.get('/api/movies')
+@routes.get("/api/movies")
 async def get_movies(request):
-    folder = request.query.get('folder', 'zubarev')
-    category = request.query.get('category', 'ALL')
-    search = request.query.get('search', '').lower().strip()
+    folder = request.query.get("folder", "zubarev")
+    cat = request.query.get("category", "ALL")
+    search = request.query.get("search", "").lower().strip()
 
     con = get_raw_db()
     cur = con.cursor()
-
-    query = """
+    q = """
         SELECT m.post_id, m.title, m.year, m.category, m.genres, m.stream_date,
-               CASE WHEN w.post_id IS NOT NULL THEN 1 ELSE 0 END as is_watched,
-               CASE WHEN wt.post_id IS NOT NULL THEN 1 ELSE 0 END as is_watching,
+               CASE WHEN w.post_id IS NOT NULL THEN 1 ELSE 0 END,
+               CASE WHEN wt.post_id IS NOT NULL THEN 1 ELSE 0 END,
                m.channel_id, m.channel_msg_id, m.folder
         FROM movies m
         LEFT JOIN watched w ON m.post_id = w.post_id AND w.user_id = ?
@@ -58,87 +47,57 @@ async def get_movies(request):
         WHERE 1=1
     """
     args = [ADMIN_ID, ADMIN_ID]
-
-    if folder and folder.lower() != 'all':
-        query += " AND m.folder = ?"
-        args.append(folder)
-
-    if category and category.upper() != 'ALL':
-        query += " AND m.category = ?"
-        args.append(category)
-
+    if folder and folder.lower() != "all":
+        q += " AND m.folder = ?"; args.append(folder)
+    if cat and cat.upper() != "ALL":
+        q += " AND m.category = ?"; args.append(cat)
     if search:
-        query += " AND LOWER(m.title) LIKE ?"
-        args.append(f"%{search}%")
+        q += " AND LOWER(m.title) LIKE ?"; args.append(f"%{search}%")
+    q += " ORDER BY m.post_id ASC"
 
-    query += " ORDER BY m.post_id ASC"
-    rows = cur.execute(query, args).fetchall()
+    rows = cur.execute(q, args).fetchall()
     con.close()
 
-    data = []
-    for r in rows:
-        data.append({
-            "post_id": r[0],
-            "id": r[0],
-            "pid": r[0],
-            "title": r[1] or "",
-            "year": r[2] or "",
-            "category": r[3] or "Разное",
-            "genres": r[4] or "",
-            "stream_date": r[5] or "",
-            "date": r[5] or "",
-            "is_watched": bool(r[6]),
-            "is_watching": bool(r[7]),
-            "channel_id": r[8],
-            "channel_msg_id": r[9],
-            "folder": r[10] or "zubarev"
-        })
+    data = [{
+        "post_id": r[0], "id": r[0], "pid": r[0],
+        "title": r[1] or "", "year": r[2] or "",
+        "category": r[3] or "Разное", "genres": r[4] or "",
+        "stream_date": r[5] or "", "date": r[5] or "",
+        "is_watched": bool(r[6]), "is_watching": bool(r[7]),
+        "channel_id": r[8], "channel_msg_id": r[9],
+        "folder": r[10] or "zubarev"
+    } for r in rows]
     return web.json_response(data)
 
-# ДЕТАЛИ ФИЛЬМА
-@routes.get('/api/movie')
+@routes.get("/api/movie")
 async def get_single_movie(request):
-    pid = request.query.get('pid') or request.query.get('id')
-    if not pid or not pid.isdigit():
-        return web.json_response({"error": "invalid pid"}, status=400)
-
+    pid = request.query.get("pid") or request.query.get("id") or "0"
     con = get_raw_db()
     cur = con.cursor()
-    query = """
+    q = """
         SELECT m.post_id, m.title, m.category, m.stream_date,
-               CASE WHEN w.post_id IS NOT NULL THEN 1 ELSE 0 END as is_watched,
-               CASE WHEN wt.post_id IS NOT NULL THEN 1 ELSE 0 END as is_watching,
+               CASE WHEN w.post_id IS NOT NULL THEN 1 ELSE 0 END,
+               CASE WHEN wt.post_id IS NOT NULL THEN 1 ELSE 0 END,
                m.folder, m.year, m.genres, m.channel_id, m.channel_msg_id
         FROM movies m
         LEFT JOIN watched w ON m.post_id = w.post_id AND w.user_id = ?
         LEFT JOIN watching wt ON m.post_id = wt.post_id AND wt.user_id = ?
         WHERE m.post_id = ? LIMIT 1
     """
-    r = cur.execute(query, (ADMIN_ID, ADMIN_ID, int(pid))).fetchone()
+    r = cur.execute(q, (ADMIN_ID, ADMIN_ID, int(pid))).fetchone()
     con.close()
-
     if not r:
         return web.json_response({"error": "not found"}, status=404)
-
     return web.json_response({
-        "pid": r[0],
-        "id": r[0],
-        "post_id": r[0],
-        "title": r[1] or "",
-        "category": r[2] or "Разное",
-        "date": r[3] or "",
-        "stream_date": r[3] or "",
-        "is_watched": bool(r[4]),
-        "is_watching": bool(r[5]),
-        "folder": r[6] or "zubarev",
-        "year": r[7] or "",
-        "genres": r[8] or "",
-        "channel_id": r[9],
-        "channel_msg_id": r[10]
+        "pid": r[0], "id": r[0], "post_id": r[0],
+        "title": r[1] or "", "category": r[2] or "Разное",
+        "date": r[3] or "", "stream_date": r[3] or "",
+        "is_watched": bool(r[4]), "is_watching": bool(r[5]),
+        "folder": r[6] or "zubarev", "year": r[7] or "",
+        "genres": r[8] or "", "channel_id": r[9], "channel_msg_id": r[10]
     })
 
-# СТАТИСТИКА
-@routes.get('/api/stats')
+@routes.get("/api/stats")
 async def get_stats(request):
     con = get_raw_db()
     cur = con.cursor()
@@ -148,242 +107,169 @@ async def get_stats(request):
     con.close()
     return web.json_response({"total": total, "watched": watched, "watching": watching, "is_admin": True})
 
-# СПИСОК "СМОТРЮ"
-@routes.get('/api/watching')
+@routes.get("/api/watching")
 async def get_watching(request):
     con = get_raw_db()
     cur = con.cursor()
-    query = """
-        SELECT m.post_id, m.title, m.year, m.category, m.genres, m.stream_date, 0, 1, m.channel_id, m.channel_msg_id, m.folder
+    q = """
+        SELECT m.post_id, m.title, m.year, m.category, m.genres, m.stream_date
         FROM movies m
         INNER JOIN watching wt ON m.post_id = wt.post_id AND wt.user_id = ?
         ORDER BY wt.rowid DESC
     """
-    rows = cur.execute(query, (ADMIN_ID,)).fetchall()
+    rows = cur.execute(q, (ADMIN_ID,)).fetchall()
     con.close()
+    return web.json_response([{
+        "post_id": r[0], "id": r[0], "pid": r[0],
+        "title": r[1] or "", "category": r[3] or "Разное",
+        "date": r[5] or "", "is_watched": False, "is_watching": True
+    } for r in rows])
 
-    data = []
-    for r in rows:
-        data.append({
-            "post_id": r[0],
-            "id": r[0],
-            "pid": r[0],
-            "title": r[1] or "",
-            "category": r[3] or "Разное",
-            "date": r[5] or "",
-            "is_watched": False,
-            "is_watching": True,
-            "folder": r[10] or "zubarev"
-        })
-    return web.json_response(data)
-
-# ДЕЙСТВИЯ КНОПОК ("watched", "watching")
-@routes.post('/api/action')
+@routes.post("/api/action")
 async def post_action(request):
     try:
         body = await request.json()
-        pid = int(body.get('pid', 0))
-        action = body.get('action', '')
-        active = False
-
+        pid = int(body.get("pid", 0))
+        act = body.get("action", "")
         con = get_raw_db()
         cur = con.cursor()
-
-        if action == 'watched':
-            exists = cur.execute("SELECT 1 FROM watched WHERE user_id = ? AND post_id = ?", (ADMIN_ID, pid)).fetchone()
-            if exists:
+        active = False
+        if act == "watched":
+            ex = cur.execute("SELECT 1 FROM watched WHERE user_id = ? AND post_id = ?", (ADMIN_ID, pid)).fetchone()
+            if ex:
                 cur.execute("DELETE FROM watched WHERE user_id = ? AND post_id = ?", (ADMIN_ID, pid))
-                active = False
             else:
                 cur.execute("INSERT OR IGNORE INTO watched (user_id, post_id) VALUES (?, ?)", (ADMIN_ID, pid))
                 cur.execute("DELETE FROM watching WHERE user_id = ? AND post_id = ?", (ADMIN_ID, pid))
                 active = True
-
-        elif action == 'watching':
-            exists = cur.execute("SELECT 1 FROM watching WHERE user_id = ? AND post_id = ?", (ADMIN_ID, pid)).fetchone()
-            if exists:
+        elif act == "watching":
+            ex = cur.execute("SELECT 1 FROM watching WHERE user_id = ? AND post_id = ?", (ADMIN_ID, pid)).fetchone()
+            if ex:
                 cur.execute("DELETE FROM watching WHERE user_id = ? AND post_id = ?", (ADMIN_ID, pid))
-                active = False
             else:
                 cur.execute("INSERT OR IGNORE INTO watching (user_id, post_id) VALUES (?, ?)", (ADMIN_ID, pid))
                 active = True
-
         con.commit()
         con.close()
         return web.json_response({"status": "ok", "active": active})
     except Exception as e:
         return web.json_response({"status": "error", "message": str(e)}, status=400)
 
-@routes.post('/api/watch')
-async def post_watch(request):
+@routes.post("/api/watch")
+@routes.post("/api/clear_chat")
+async def simple_ok(request):
     return web.json_response({"status": "ok"})
 
-@routes.post('/api/clear_chat')
-async def clear_chat(request):
-    return web.json_response({"status": "ok"})
-
-@routes.get('/api/guests')
-async def get_guests(request):
+@routes.get("/api/guests")
+async def guests_handler(request):
     return web.json_response([])
 
-# ИЗВЛЕЧЕНИЕ 1-3 ЧАСТЕЙ ВИДЕО ИЗ КАНАЛА
-@routes.get('/api/parts')
-async def get_movie_parts(request):
-    pid = int(request.query.get('pid', '0'))
+@routes.get("/api/parts")
+async def get_parts(request):
+    pid = int(request.query.get("pid", "0"))
     con = get_raw_db()
     cur = con.cursor()
     row = cur.execute("SELECT channel_id, channel_msg_id, title FROM movies WHERE post_id = ?", (pid,)).fetchone()
     con.close()
-
     if not row:
         return web.json_response({"error": "not found"}, status=404)
 
-    channel_id, msg_id, title = row
+    cid, mid, title = row
     parts = []
-
     global pyro_client
     if pyro_client and pyro_client.is_connected:
         try:
-            target_chat = int(channel_id) if str(channel_id).lstrip('-').isdigit() else channel_id
-            msg = await pyro_client.get_messages(target_chat, int(msg_id))
-
+            chat = int(cid) if str(cid).lstrip("-").isdigit() else cid
+            msg = await pyro_client.get_messages(chat, int(mid))
             if msg.media_group_id:
-                group = await pyro_client.get_media_group(target_chat, int(msg_id))
-                group = sorted(group, key=lambda m: m.id)
-                for idx, m in enumerate(group):
+                group = await pyro_client.get_media_group(chat, int(mid))
+                for idx, m in enumerate(sorted(group, key=lambda x: x.id)):
                     media = m.video or m.document
                     if media:
-                        parts.append({
-                            "part": idx + 1,
-                            "msg_id": m.id,
-                            "duration": getattr(media, 'duration', 0) or 0,
-                            "size": getattr(media, 'file_size', 0) or 0
-                        })
+                        parts.append({"part": idx + 1, "msg_id": m.id, "size": getattr(media, "file_size", 0)})
             else:
                 media = msg.video or msg.document
                 if media:
-                    parts.append({
-                        "part": 1,
-                        "msg_id": msg.id,
-                        "duration": getattr(media, 'duration', 0) or 0,
-                        "size": getattr(media, 'file_size', 0) or 0
-                    })
+                    parts.append({"part": 1, "msg_id": msg.id, "size": getattr(media, "file_size", 0)})
         except Exception as e:
-            print(f"[Python] Ошибка извлечения частей: {e}")
+            print(f"[Parts Error] {e}")
 
     if not parts:
-        parts.append({"part": 1, "msg_id": int(msg_id), "duration": 0, "size": 0})
+        parts.append({"part": 1, "msg_id": int(mid), "size": 0})
+    return web.json_response({"pid": pid, "title": title, "channel_id": cid, "parts": parts})
 
-    return web.json_response({
-        "pid": pid,
-        "title": title,
-        "channel_id": channel_id,
-        "parts": parts
-    })
-
-# ПОТОКОВОЕ ВОСПРОИЗВЕДЕНИЕ (С ПОДДЕРЖКОЙ HEAD И RANGE ДЛЯ ФАЙЛОВ > 2 ГБ)
-@routes.route('HEAD', '/stream')
-@routes.get('/stream')
+@routes.route("HEAD", "/stream")
+@routes.get("/stream")
 async def stream_handler(request):
-    channel_id = request.query.get('channel_id', '@zubszu')
-    msg_id = int(request.query.get('msg_id', '0'))
-
+    cid = request.query.get("channel_id", "@zubszu")
+    mid = int(request.query.get("msg_id", "0"))
     global pyro_client
     if not pyro_client or not pyro_client.is_connected:
-        return web.Response(text="Pyrogram не подключен", status=503)
+        return web.Response(text="Pyrogram offline", status=503)
 
-    target_chat = int(channel_id) if str(channel_id).lstrip('-').isdigit() else channel_id
-    try:
-        msg = await pyro_client.get_messages(target_chat, msg_id)
-    except Exception as e:
-        return web.Response(text=f"Сообщение не найдено: {e}", status=404)
-
+    chat = int(cid) if str(cid).lstrip("-").isdigit() else cid
+    msg = await pyro_client.get_messages(chat, mid)
     media = msg.video or msg.document
     if not media:
-        return web.Response(text="Видео не найдено", status=404)
+        return web.Response(text="No media", status=404)
 
-    file_size = int(media.file_size)
+    fsize = int(media.file_size)
+    if request.method == "HEAD":
+        return web.Response(headers={"Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Length": str(fsize)})
 
-    # Обработка HEAD-запроса от ExoPlayer
-    if request.method == 'HEAD':
-        return web.Response(status=200, headers={
-            'Content-Type': 'video/mp4',
-            'Accept-Ranges': 'bytes',
-            'Content-Length': str(file_size)
-        })
-
-    range_header = request.headers.get('Range', None)
-    start = 0
-    end = file_size - 1
-
-    if range_header:
-        m = re.search(r'bytes=(\d+)-(\d*)', range_header)
+    rh = request.headers.get("Range", None)
+    start, end = 0, fsize - 1
+    if rh:
+        m = re.search(r"bytes=(\d+)-(\d*)", rh)
         if m:
             start = int(m.group(1))
-            if m.group(2):
-                end = int(m.group(2))
+            if m.group(2): end = int(m.group(2))
 
-    content_length = end - start + 1
-    headers = {
-        'Content-Type': 'video/mp4',
-        'Accept-Ranges': 'bytes',
-        'Content-Range': f'bytes {start}-{end}/{file_size}',
-        'Content-Length': str(content_length)
-    }
+    clen = end - start + 1
+    res = web.StreamResponse(status=206 if rh else 200, headers={
+        "Content-Type": "video/mp4", "Accept-Ranges": "bytes",
+        "Content-Range": f"bytes {start}-{end}/{fsize}", "Content-Length": str(clen)
+    })
+    await res.prepare(request)
 
-    response = web.StreamResponse(status=206 if range_header else 200, headers=headers)
-    await response.prepare(request)
-
-    chunk_size = 1024 * 1024
-    start_chunk = start // chunk_size
-    first_skip = start % chunk_size
+    csize = 1024 * 1024
+    schunk = start // csize
+    fskip = start % csize
+    sent = 0
 
     try:
-        bytes_sent = 0
-        async for chunk in pyro_client.stream_media(msg, offset=start_chunk):
-            if first_skip > 0:
-                chunk = chunk[first_skip:]
-                first_skip = 0
-
-            if bytes_sent + len(chunk) > content_length:
-                chunk = chunk[:content_length - bytes_sent]
-
-            await response.write(chunk)
-            bytes_sent += len(chunk)
-
-            if bytes_sent >= content_length:
-                break
+        async for chunk in pyro_client.stream_media(msg, offset=schunk):
+            if fskip > 0:
+                chunk = chunk[fskip:]; fskip = 0
+            if sent + len(chunk) > clen:
+                chunk = chunk[:clen - sent]
+            await res.write(chunk)
+            sent += len(chunk)
+            if sent >= clen: break
     except Exception:
         pass
-
-    return response
+    return res
 
 def start_server_main(app_files_dir):
     global pyro_client, db_path, work_dir
     work_dir = app_files_dir
     db_path = os.path.join(work_dir, "tracker.db")
-    session_path = os.path.join(work_dir, "my_session")
+    sess_path = os.path.join(work_dir, "my_session")
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
     from pyrogram import Client
-    pyro_client = Client(session_path, api_id=API_ID, api_hash=API_HASH)
+    pyro_client = Client(sess_path, api_id=API_ID, api_hash=API_HASH)
 
-    async def init_app():
+    async def init():
         try:
             await pyro_client.start()
-            print("[Python] Pyrogram успешно подключен к Telegram")
-            try:
-                await pyro_client.get_chat("@zubszu")
-            except Exception:
-                pass
+            print("✓ Telegram подключен")
         except Exception as e:
-            print(f"[Python] Ошибка старта Pyrogram: {e}")
-
+            print(f"✗ Ошибка TG: {e}")
         app = web.Application()
         app.add_routes(routes)
         return app
 
-    app = loop.run_until_complete(init_app())
-    web.run_app(app, host='127.0.0.1', port=8080, loop=loop, handle_signals=False)
+    app = loop.run_until_complete(init())
+    web.run_app(app, host="127.0.0.1", port=8080, loop=loop, handle_signals=False)
