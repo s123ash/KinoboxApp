@@ -2,6 +2,7 @@ package com.kinobox.app
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -9,9 +10,14 @@ import java.io.FileOutputStream
 
 class DatabaseHelper(private val context: Context) {
     private val dbName = "tracker.db"
+    private val tag = "KinoboxDB"
 
     init {
-        copyDatabaseIfNeeded()
+        try {
+            copyDatabaseIfNeeded()
+        } catch (e: Exception) {
+            Log.e(tag, "Ошибка копирования базы данных: ${e.message}", e)
+        }
     }
 
     private fun copyDatabaseIfNeeded() {
@@ -23,38 +29,50 @@ class DatabaseHelper(private val context: Context) {
                     input.copyTo(output)
                 }
             }
+            Log.d(tag, "База успешно скопирована из assets")
         }
     }
 
     fun getAllMoviesJson(): String {
         val dbFile = context.getDatabasePath(dbName)
-        if (!dbFile.exists()) return "[]"
-        
-        val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
+        if (!dbFile.exists()) {
+            Log.w(tag, "Файл базы данных не найден по пути: ${dbFile.path}")
+            return "[]"
+        }
+
         val array = JSONArray()
+        var db: SQLiteDatabase? = null
+        try {
+            db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
 
-        val tableCursor = db.rawQuery(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1", null
-        )
-        var tableName = "movies"
-        if (tableCursor.moveToFirst()) {
-            tableName = tableCursor.getString(0)
-        }
-        tableCursor.close()
-
-        val cursor = db.rawQuery("SELECT * FROM $tableName", null)
-        val columnNames = cursor.columnNames
-
-        while (cursor.moveToNext()) {
-            val obj = JSONObject()
-            for (col in columnNames) {
-                val index = cursor.getColumnIndex(col)
-                obj.put(col, cursor.getString(index))
+            // Ищем таблицу с фильмами (исключая системные таблицы sqlite)
+            val tableCursor = db.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'android_%' LIMIT 1",
+                null
+            )
+            var tableName = "movies"
+            if (tableCursor.moveToFirst()) {
+                tableName = tableCursor.getString(0)
             }
-            array.put(obj)
+            tableCursor.close()
+
+            val cursor = db.rawQuery("SELECT * FROM $tableName", null)
+            val columnNames = cursor.columnNames
+
+            while (cursor.moveToNext()) {
+                val obj = JSONObject()
+                for (col in columnNames) {
+                    val index = cursor.getColumnIndex(col)
+                    obj.put(col, cursor.getString(index) ?: "")
+                }
+                array.put(obj)
+            }
+            cursor.close()
+        } catch (e: Exception) {
+            Log.e(tag, "Ошибка чтения фильмов из БД: ${e.message}", e)
+        } finally {
+            db?.close()
         }
-        cursor.close()
-        db.close()
         return array.toString()
     }
 }

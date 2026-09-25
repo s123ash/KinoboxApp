@@ -1,6 +1,23 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
+
+<script>
+// Автономный мост между Android и WebApp
+window.loadKinoboxMovies = function() {
+    if (window.Android && window.Android.getMovies) {
+        try {
+            var raw = window.Android.getMovies();
+            return JSON.parse(raw);
+        } catch(e) {
+            console.error("Ошибка парсинга базы: ", e);
+            return [];
+        }
+    }
+    return [];
+};
+</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>КиноБокс — каталог фильмов</title>
