@@ -26,11 +26,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Копируем базу, сессию и интерфейс во внутреннее хранилище
-        copyAssetToFile("tracker.db")
-        copyAssetToFile("my_session.session")
-        copyAssetToFile(".env")
-        copyAssetToFile("index.html")
+        // Копируем базу и сессию
+        copyAssetToFile("tracker.db", overwrite = false)
+        copyAssetToFile("my_session.session", overwrite = false)
+        copyAssetToFile("index.html", overwrite = true)
 
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(this))
@@ -64,18 +63,16 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // Даем серверу время на старт и открываем каталог
         webView.postDelayed({
             webView.loadUrl("http://127.0.0.1:8080")
         }, 2000)
     }
 
-    private fun copyAssetToFile(fileName: String) {
+    private fun copyAssetToFile(fileName: String, overwrite: Boolean) {
         try {
             val dest = File(filesDir, fileName)
-            assets.open(fileName).use { input ->
-                val assetSize = input.available().toLong()
-                if (!dest.exists() || dest.length() != assetSize) {
+            if (overwrite || !dest.exists() || dest.length() == 0L) {
+                assets.open(fileName).use { input ->
                     dest.parentFile?.mkdirs()
                     FileOutputStream(dest).use { output ->
                         input.copyTo(output)
