@@ -86,8 +86,7 @@ async def get_single_movie(request):
     """
     r = cur.execute(q, (ADMIN_ID, ADMIN_ID, int(pid))).fetchone()
     con.close()
-    if not r:
-        return web.json_response({"error": "not found"}, status=404)
+    if not r: return web.json_response({"error": "not found"}, status=404)
     return web.json_response({
         "pid": r[0], "id": r[0], "post_id": r[0],
         "title": r[1] or "", "category": r[2] or "Разное",
@@ -171,8 +170,7 @@ async def get_parts(request):
     cur = con.cursor()
     row = cur.execute("SELECT channel_id, channel_msg_id, title FROM movies WHERE post_id = ?", (pid,)).fetchone()
     con.close()
-    if not row:
-        return web.json_response({"error": "not found"}, status=404)
+    if not row: return web.json_response({"error": "not found"}, status=404)
 
     cid, mid, title = row
     parts = []
@@ -198,7 +196,8 @@ async def get_parts(request):
         parts.append({"part": 1, "msg_id": int(mid), "size": 0})
     return web.json_response({"pid": pid, "title": title, "channel_id": cid, "parts": parts})
 
-@routes.route("HEAD", "/stream")
+# Корректная регистрация HEAD и GET для потокового видео
+@routes.head("/stream")
 @routes.get("/stream")
 async def stream_handler(request):
     cid = request.query.get("channel_id", "@zubszu")
@@ -210,8 +209,7 @@ async def stream_handler(request):
     chat = int(cid) if str(cid).lstrip("-").isdigit() else cid
     msg = await pyro_client.get_messages(chat, mid)
     media = msg.video or msg.document
-    if not media:
-        return web.Response(text="No media", status=404)
+    if not media: return web.Response(text="No media", status=404)
 
     fsize = int(media.file_size)
     if request.method == "HEAD":
@@ -250,6 +248,19 @@ async def stream_handler(request):
         pass
     return res
 
+async def connect_tg_in_background():
+    global pyro_client
+    if pyro_client:
+        try:
+            await pyro_client.start()
+            print("✓ Telegram клиент успешно подключен в фоне")
+            try:
+                await pyro_client.get_chat("@zubszu")
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"✗ Ошибка подключения TG: {e}")
+
 def start_server_main(app_files_dir):
     global pyro_client, db_path, work_dir
     work_dir = app_files_dir
@@ -258,18 +269,13 @@ def start_server_main(app_files_dir):
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
     from pyrogram import Client
     pyro_client = Client(sess_path, api_id=API_ID, api_hash=API_HASH)
 
-    async def init():
-        try:
-            await pyro_client.start()
-            print("✓ Telegram подключен")
-        except Exception as e:
-            print(f"✗ Ошибка TG: {e}")
-        app = web.Application()
-        app.add_routes(routes)
-        return app
+    # Запускаем подключение к Telegram в фоне, не блокируя запуск сайта
+    loop.create_task(connect_tg_in_background())
 
-    app = loop.run_until_complete(init())
+    app = web.Application()
+    app.add_routes(routes)
     web.run_app(app, host="127.0.0.1", port=8080, loop=loop, handle_signals=False)
