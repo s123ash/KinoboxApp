@@ -10,14 +10,24 @@ if work_dir not in sys.path:
     sys.path.insert(0, work_dir)
 
 db_path = os.path.join(work_dir, "tracker.db")
-
-import tg_creds
-API_ID = getattr(tg_creds, "API_ID", None)
-API_HASH = getattr(tg_creds, "API_HASH", None)
-ADMIN_ID = getattr(tg_creds, "ADMIN_ID", 846768993)
-
 routes = web.RouteTableDef()
 pyro_client = None
+
+# Читаем ключи из env.txt (переименованный .env)
+API_ID = None
+API_HASH = None
+ADMIN_ID = 846768993
+
+env_path = os.path.join(work_dir, "env.txt")
+if os.path.exists(env_path):
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("API_ID="):
+                try: API_ID = int(line.split("=", 1)[1])
+                except: pass
+            elif line.startswith("API_HASH="):
+                API_HASH = line.split("=", 1)[1].strip("'\"")
 
 def get_raw_db():
     return sqlite3.connect(db_path)
@@ -26,7 +36,10 @@ def get_raw_db():
 @routes.get("/index.html")
 async def index_handler(request):
     f = os.path.join(work_dir, "index.html")
-    return web.FileResponse(f) if os.path.exists(f) else web.Response(text="not found", status=404)
+    if os.path.exists(f):
+        with open(f, "r", encoding="utf-8") as file:
+            return web.Response(text=file.read(), content_type="text/html")
+    return web.Response(text="index.html not found", status=404)
 
 @routes.get("/api/movies")
 async def get_movies(request):
@@ -86,8 +99,7 @@ async def get_single_movie(request):
     """
     r = cur.execute(q, (ADMIN_ID, ADMIN_ID, int(pid))).fetchone()
     con.close()
-    if not r:
-        return web.json_response({"error": "not found"}, status=404)
+    if not r: return web.json_response({"error": "not found"}, status=404)
     return web.json_response({
         "pid": r[0], "id": r[0], "post_id": r[0],
         "title": r[1] or "", "category": r[2] or "Разное",
@@ -171,8 +183,7 @@ async def get_parts(request):
     cur = con.cursor()
     row = cur.execute("SELECT channel_id, channel_msg_id, title FROM movies WHERE post_id = ?", (pid,)).fetchone()
     con.close()
-    if not row:
-        return web.json_response({"error": "not found"}, status=404)
+    if not row: return web.json_response({"error": "not found"}, status=404)
 
     cid, mid, title = row
     parts = []
@@ -191,8 +202,8 @@ async def get_parts(request):
                 media = msg.video or msg.document
                 if media:
                     parts.append({"part": 1, "msg_id": msg.id, "size": getattr(media, "file_size", 0)})
-        except Exception as e:
-            print(f"[Parts Error] {e}")
+        except Exception:
+            pass
 
     if not parts:
         parts.append({"part": 1, "msg_id": int(mid), "size": 0})
@@ -205,13 +216,16 @@ async def stream_handler(request):
     mid = int(request.query.get("msg_id", "0"))
     global pyro_client
     if not pyro_client or not pyro_client.is_connected:
-        return web.Response(text="Pyrogram offline", status=503)
+        return web.Response(text="Telegram не подключен", status=503)
 
     chat = int(cid) if str(cid).lstrip("-").isdigit() else cid
-    msg = await pyro_client.get_messages(chat, mid)
+    try:
+        msg = await pyro_client.get_messages(chat, mid)
+    except Exception:
+        return web.Response(text="Сообщение не найдено", status=404)
+        
     media = msg.video or msg.document
-    if not media:
-        return web.Response(text="No media", status=404)
+    if not media: return web.Response(text="Медиа не найдено", status=404)
 
     fsize = int(media.file_size)
     if request.method == "HEAD":
@@ -252,16 +266,11 @@ async def stream_handler(request):
 
 async def connect_tg_in_background():
     global pyro_client
-    if pyro_client:
-        try:
-            await pyro_client.start()
-            print("✓ Telegram клиент успешно подключен в фоне")
-            try:
-                await pyro_client.get_chat("@zubszu")
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"✗ Ошибка подключения TG: {e}")
+    try:
+        await pyro_client.start()
+        print("✓ Telegram клиент успешно подключен в фоне")
+    except Exception as e:
+        print(f"✗ Ошибка подключения Telegram: {e}")
 
 def start_server_main(app_files_dir):
     global pyro_client, db_path, work_dir
@@ -272,11 +281,18 @@ def start_server_main(app_files_dir):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    from pyrogram import Client
-    pyro_client = Client(sess_path, api_id=API_ID, api_hash=API_HASH)
+    # 1. ЗАЩИТНЫЙ БЛОК: Инициализируем Telegram ТОЛЬКО если есть ключи
+    try:
+        if API_ID and API_HASH:
+            from pyrogram import Client
+            pyro_client = Client(sess_path, api_id=API_ID, api_hash=API_HASH)
+            loop.create_task(connect_tg_in_background())
+        else:
+            print("ВНИМАНИЕ: Нет API_ID/API_HASH в env.txt. Сервер работает в offline-режиме.")
+    except Exception as e:
+        print(f"Критическая ошибка Pyrogram: {e}")
 
-    loop.create_task(connect_tg_in_background())
-
+    # 2. ГАРАНТИРОВАННЫЙ ЗАПУСК ВЕБ-СЕРВЕРА
     app = web.Application()
     app.add_routes(routes)
     web.run_app(app, host="127.0.0.1", port=8080, loop=loop, handle_signals=False)

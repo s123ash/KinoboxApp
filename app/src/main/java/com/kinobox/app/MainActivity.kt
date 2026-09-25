@@ -19,6 +19,9 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Копируем все необходимые файлы (особенно env.txt)
+        copyAsset("env.txt", true)
         copyAsset("tracker.db", false)
         copyAsset("my_session.session", false)
         copyAsset("index.html", true)
@@ -53,7 +56,9 @@ class MainActivity : AppCompatActivity() {
                 if (webView.canGoBack()) webView.goBack() else { isEnabled = false; onBackPressedDispatcher.onBackPressed() }
             }
         })
-        webView.postDelayed({ webView.loadUrl("http://127.0.0.1:8080") }, 2000)
+        
+        // Даем серверу чуть больше времени на первый запуск, затем открываем каталог
+        webView.postDelayed({ webView.loadUrl("http://127.0.0.1:8080") }, 2500)
     }
 
     private fun copyAsset(name: String, overwrite: Boolean) {
