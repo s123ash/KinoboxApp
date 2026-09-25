@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.chaquo.python")
 }
 
 android {
@@ -13,6 +14,10 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -33,6 +38,17 @@ android {
     }
 }
 
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+        pip {
+            install("pyrogram==2.0.106")
+            install("aiohttp==3.9.5")
+            install("pyaes")
+        }
+    }
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
@@ -43,8 +59,4 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-session:1.3.1")
-
-    // Coroutines & JSON
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    implementation("org.json:json:20240303")
 }

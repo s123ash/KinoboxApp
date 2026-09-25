@@ -1,0 +1,1281 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+
+<script>
+window.addEventListener("DOMContentLoaded", function() {
+    document.addEventListener("click", function(e) {
+        var btn = e.target.closest(".watch-btn, [onclick*="watch"], [data-pid]");
+        if (btn) {
+            var pid = btn.getAttribute("data-pid") || (window.currentMovie && window.currentMovie.pid);
+            if (pid && window.KinoboxNative && window.KinoboxNative.openPlayer) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.KinoboxNative.openPlayer(parseInt(pid));
+            }
+        }
+    }, true);
+});
+</script>
+
+
+<script id="kinobox-fetch-interceptor">
+(function() {
+    console.log("[Kinobox Bridge] Инициализация перехватчика API");
+    const originalFetch = window.fetch;
+    window.fetch = async function(resource, init) {
+        let url = typeof resource === "string" ? resource : (resource && resource.url ? resource.url : "");
+        if (url.includes("/api/")) {
+            try {
+                let fullUrl = url.startsWith("http") ? url : "http://localhost" + (url.startsWith("/") ? "" : "/") + url;
+                let parsed = new URL(fullUrl);
+                let path = parsed.pathname;
+
+                if (path === "/api/movies") {
+                    let folder = parsed.searchParams.get("folder") || "";
+                    let category = parsed.searchParams.get("category") || "ALL";
+                    let search = parsed.searchParams.get("search") || "";
+                    let raw = "[]";
+                    if (window.Android && window.Android.getMoviesFiltered) {
+                        raw = window.Android.getMoviesFiltered(folder, category, search);
+                    }
+                    return new Response(raw, {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+
+                if (path === "/api/stats") {
+                    let raw = "{"total":0,"watched":0}";
+                    if (window.Android && window.Android.getStats) {
+                        raw = window.Android.getStats();
+                    }
+                    return new Response(raw, {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+
+                if (path === "/api/movie") {
+                    let pid = parsed.searchParams.get("pid") || parsed.searchParams.get("id") || "";
+                    let raw = "{}";
+                    if (window.Android && window.Android.getSingleMovie) {
+                        raw = window.Android.getSingleMovie(pid);
+                    }
+                    return new Response(raw, {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+
+                if (path === "/api/watching") {
+                    return new Response(JSON.stringify([]), {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+
+                if (path === "/api/action" || path === "/api/watch") {
+                    return new Response(JSON.stringify({ status: "ok" }), {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+            } catch(e) {
+                console.error("[Kinobox Bridge] Ошибка перехвата:", e);
+            }
+        }
+        return originalFetch.apply(this, arguments);
+    };
+})();
+</script>
+
+
+<script>
+// Автономный мост между Android и WebApp
+// removed
+    if (window.Android && window.Android.getMovies) {
+        try {
+            var raw = window.Android.getMovies();
+            return JSON.parse(raw);
+        } catch(e) {
+            console.error("Ошибка парсинга базы: ", e);
+            return [];
+        }
+    }
+    return [];
+};
+</script>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>КиноБокс — каталог фильмов</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a1022; 
+  --fg: #f0e9dd; 
+  --muted: #9aa2c8; 
+  --line: rgba(178, 160, 255, 0.20);
+  --card: rgba(28, 34, 66, 0.85); 
+  --card-solid: #151b38; 
+  --primary: #a58bff; 
+  --primary-2: #5f8bf7;
+  --deep: #232a63; 
+  --violet: #3a2b6b; 
+  --sand: #e8d9bd;
+  --danger: #e2564d; 
+  --success: #4fd39a; 
+  --radius: 18px;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Barlow", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+  position: relative;
+  isolation: isolate;
+}
+
+body {
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 14px calc(92px + env(safe-area-inset-bottom, 14px));
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+   radial-gradient(circle at 12% 4%, rgba(95, 139, 247, 0.25), transparent 34%),
+   radial-gradient(circle at 92% 48%, rgba(165, 139, 255, 0.22), transparent 36%),
+   linear-gradient(180deg, #0a1022, #101637 60%, #150f2e);
+}
+
+.wrap {
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+h1, h2, h3, .display {
+  font-family: "Bebas Neue", Impact, sans-serif;
+  font-weight: 400;
+  letter-spacing: .5px;
+}
+
+.mut { color: var(--muted); }
+.tiny { font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; }
+
+/* Шапка */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  color: #101024;
+  box-shadow: 0 10px 26px rgba(95, 139, 247, 0.35);
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 10px var(--success);
+}
+
+/* Баннер Hero */
+.hero {
+  position: relative;
+  min-height: 160px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  overflow: hidden;
+  margin-bottom: 14px;
+  box-shadow: 0 20px 50px rgba(5, 8, 22, 0.65);
+}
+.hero .sky { position: absolute; inset: 0; background: linear-gradient(180deg, #1a2455, #38306f 55%, #6a4c7a); }
+.hero .m1, .hero .m2 { position: absolute; bottom: 0; left: -5%; width: 110%; }
+.hero .m1 { height: 68%; background: #1b1f4a; clip-path: polygon(0 100%, 14% 42%, 28% 70%, 44% 24%, 62% 66%, 78% 38%, 100% 82%, 100% 100%); }
+.hero .m2 { height: 50%; background: #2c2358; clip-path: polygon(0 100%, 10% 60%, 26% 30%, 42% 62%, 58% 36%, 74% 68%, 90% 44%, 100% 74%, 100% 100%); opacity: .85; }
+.hero .moon {
+  position: absolute;
+  top: 20px;
+  right: 28px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #f6ecd4, #d9c49a);
+  box-shadow: 0 0 45px rgba(232, 217, 189, 0.5);
+}
+.hero .shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(10,16,34,0.1), rgba(10,16,34,0.92)); }
+.hero .inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px;
+  min-height: 160px;
+}
+.hero .big { font-size: clamp(30px, 8vw, 42px); line-height: .95; color: #fbf5e9; }
+
+/* Поиск */
+.search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 14px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  backdrop-filter: blur(16px);
+}
+.search input {
+  flex: 1;
+  background: none;
+  border: 0;
+  outline: 0;
+  color: var(--fg);
+  font-size: 15px;
+}
+.search input::placeholder { color: var(--muted); }
+
+/* Переключатели и кнопки */
+.segmented {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  backdrop-filter: blur(16px);
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--fg);
+  background: transparent;
+  transition: transform .12s ease, background .15s ease;
+}
+.btn:active { transform: scale(.97); }
+.btn.block { width: 100%; margin-bottom: 10px; }
+.btn.primary { background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #0e1024; font-weight: 700; box-shadow: 0 8px 24px rgba(95,139,247,.3); }
+.btn.glass { background: var(--card); border-color: var(--line); }
+.btn.ghost { color: var(--muted); }
+.btn.danger { background: rgba(226,86,77,.18); border-color: rgba(226,86,77,.5); color: #ff9a92; }
+.btn.success { background: rgba(79,211,154,.18); border-color: rgba(79,211,154,.5); color: #8ff0c6; }
+.btn.sm { padding: 7px 12px; font-size: 12px; }
+
+/* Категории */
+.chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.chip.active { background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #0e1024; border-color: transparent; }
+
+.sec-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin: 6px 2px 10px;
+}
+.sec-head h2 { font-size: 26px; }
+
+/* Сетка и крупные сочные карточки фильмов */
+.grid { 
+  display: grid; 
+  gap: 12px; 
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 84px;
+  padding: 12px 14px;
+  text-align: left;
+  width: 100%;
+  border: 1px solid rgba(178, 160, 255, 0.22);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(28, 34, 66, 0.9), rgba(18, 23, 48, 0.95));
+  backdrop-filter: blur(14px);
+  color: var(--fg);
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(4, 7, 20, 0.4);
+  transition: transform .12s ease, border-color .15s ease;
+}
+.row:active { 
+  transform: scale(0.985); 
+  border-color: var(--primary);
+}
+.tile {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+  background: linear-gradient(135deg, rgba(165, 139, 255, 0.22), rgba(95, 139, 247, 0.12));
+  border: 1px solid rgba(165, 139, 255, 0.35);
+  box-shadow: 0 4px 14px rgba(95, 139, 247, 0.18);
+}
+.row .body { 
+  min-width: 0; 
+  flex: 1; 
+  padding-right: 4px;
+}
+.row .title { 
+  font-weight: 700; 
+  font-size: 16px; 
+  line-height: 1.25; 
+  color: #fff;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.row .meta { 
+  font-size: 13px; 
+  color: var(--muted); 
+  margin-top: 5px; 
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.row .date { 
+  font-size: 11px; 
+  font-weight: 600;
+  color: var(--primary); 
+  margin-top: 4px; 
+  letter-spacing: .5px;
+}
+.badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+  background: rgba(165, 139, 255, 0.18);
+  border: 1px solid rgba(165, 139, 255, 0.4);
+  color: #dcd1ff;
+}
+.mark-end {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 14px;
+}
+.mark-end.on { 
+  border-color: rgba(79, 211, 154, 0.6); 
+  background: rgba(79, 211, 154, 0.18);
+  color: var(--success); 
+}
+
+/* Статистика и панели */
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  backdrop-filter: blur(16px);
+  padding: 16px;
+}
+.stat { display: flex; flex-direction: column; gap: 6px; min-height: 105px; justify-content: center; }
+.stat .num { font-size: 38px; line-height: 1; }
+.bar { height: 5px; border-radius: 999px; background: rgba(255,255,255,.09); overflow: hidden; margin: 4px 0; }
+.bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--primary), var(--primary-2)); }
+
+.empty {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  min-height: 180px;
+  font-size: 14px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+
+textarea {
+  width: 100%;
+  min-height: 90px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(8,12,28,.7);
+  color: var(--fg);
+  padding: 12px;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  margin: 10px 0;
+}
+
+/* Нижнее меню (Dock) */
+.dock {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  z-index: 50;
+  display: flex;
+  gap: 4px;
+  max-width: 620px;
+  margin: auto;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(10, 16, 34, 0.94);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 16px 48px rgba(0,0,0,.7);
+}
+.nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 7px 2px;
+  border-radius: 14px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  min-width: 0;
+}
+.nav svg { flex-shrink: 0; }
+.nav.active { background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #0e1024; }
+
+.view { display: none; }
+.view.active { display: block; }
+.sec-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.3px; color: var(--primary); }
+.big-title { font-size: clamp(32px, 8vw, 42px); line-height: 1; margin: 4px 0 6px; }
+
+/* Детали фильма */
+.detail-visual {
+  position: relative;
+  min-height: 180px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.detail-visual .inner { position: absolute; inset: auto 0 0 0; z-index: 2; padding: 16px; }
+.log { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 12px; margin-bottom: 8px; }
+.log .t { font-size: 11px; color: var(--muted); }
+.log .a { font-size: 14px; font-weight: 600; margin-top: 2px; }
+.log .d { font-size: 12px; color: var(--primary); margin-top: 2px; }
+svg { stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar" id="topbar">
+    <div class="brand">
+      <div class="mark"><svg width="20" height="20" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M7 3v18M17 3v18M2 9h20M2 15h20"/></svg></div>
+      <div>
+        <h1 style="font-size:24px">КИНОБОКС</h1>
+        <div class="tiny mut">Экспедиция · ночной сектор</div>
+      </div>
+    </div>
+    <div class="pill"><span class="dot"></span>ONLINE</div>
+  </div>
+
+  <!-- КАТАЛОГ -->
+  <div id="view-catalog" class="view active">
+    <div class="hero">
+      <div class="sky"></div><div class="moon"></div><div class="m2"></div><div class="m1"></div><div class="shade"></div>
+      <div class="inner">
+        <div class="tiny" style="display:flex;justify-content:space-between;color:#cbbfe8">
+          <span>Личный киноархив</span><span id="hero-count">0 фильмов</span>
+        </div>
+        <div>
+          <div class="display big" id="hero-title">ТВОЯ КОЛЛЕКЦИЯ</div>
+          <div style="font-size:13px;color:#cbbfe8;margin-top:3px">Выбирай маршрут на сегодняшний вечер</div>
+        </div>
+      </div>
+    </div>
+
+    <label class="search">
+      <svg width="18" height="18" viewBox="0 0 24 24" style="color:var(--primary)"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+      <input id="search" placeholder="Найти фильм…" oninput="onSearchInput()">
+      <span class="tiny mut">Поиск</span>
+    </label>
+
+    <div class="segmented">
+      <button class="btn primary" style="flex:1" id="seg-zubarev" onclick="switchFolder('zubarev')">Зубарев</button>
+      <button class="btn ghost" style="flex:1" id="seg-movies" onclick="switchFolder('movies')">Обычные</button>
+    </div>
+
+    <div class="chips" id="chips"></div>
+
+    <div class="sec-head"><h2>КАТАЛОГ</h2><span class="tiny mut" id="catalog-count"></span></div>
+    <div class="grid" id="movies-list"></div>
+  </div>
+
+  <!-- СМОТРЮ -->
+  <div id="view-watching" class="view">
+    <div class="sec-label">КиноБокс / сектор</div>
+    <h2 class="big-title">СМОТРЮ</h2>
+    <div class="mut" style="font-size:14px;margin-bottom:14px" id="watching-sub"></div>
+    <div class="grid" id="watching-list"></div>
+  </div>
+
+  <!-- СТАТИСТИКА -->
+  <div id="view-stats" class="view">
+    <div class="sec-label">КиноБокс / сектор</div>
+    <h2 class="big-title">СТАТИСТИКА</h2>
+    <div class="mut" style="font-size:14px;margin-bottom:14px">Твой кино-маршрут</div>
+    <div id="stats-content" class="grid" style="grid-template-columns:1fr 1fr"></div>
+  </div>
+
+  <!-- ГОСТИ -->
+  <div id="view-guests" class="view">
+    <div class="sec-label">КиноБокс / сектор</div>
+    <h2 class="big-title">ГОСТИ</h2>
+    <div class="mut" style="font-size:14px;margin-bottom:14px">Пользователи бота</div>
+    <div id="guests-list"></div>
+  </div>
+
+  <!-- ДЕТАЛИ ГОСТЯ -->
+  <div id="view-guest-detail" class="view">
+    <button class="btn ghost sm" onclick="closeGuestDetail()">← Все гости</button>
+    <div class="panel" id="guest-card-info" style="margin:12px 0"></div>
+    <div class="panel">
+      <div style="font-weight:600;font-size:14px">Сообщение в Telegram</div>
+      <textarea id="guest-msg-input" placeholder="Введи сообщение (оно придёт от лица бота)…"></textarea>
+      <button class="btn success block" id="btn-send-guest-msg" onclick="sendMsgToGuest()">Отправить</button>
+    </div>
+    <h3 style="font-size:22px;margin:18px 0 10px">ЖУРНАЛ ДЕЙСТВИЙ</h3>
+    <div id="guest-logs-list"></div>
+  </div>
+
+  <!-- ДЕТАЛИ ФИЛЬМА -->
+  <div id="view-detail" class="view">
+    <button class="btn ghost sm" onclick="closeDetail()">← Назад</button>
+    <div class="detail-visual" style="margin-top:10px">
+      <div class="sky"></div><div class="moon"></div><div class="m2"></div><div class="m1"></div><div class="shade"></div>
+      <div class="inner">
+        <div class="tiny" style="color:#cbbfe8" id="d-folder"></div>
+        <div class="display" style="font-size:clamp(28px,7.5vw,36px);line-height:1;color:#fbf5e9" id="d-title"></div>
+        <div style="font-size:13px;color:#cbbfe8;margin-top:4px" id="d-info"></div>
+      </div>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn glass" id="btn-toggle-watched" onclick="toggleDetailAction('watched')"></button>
+      <button class="btn glass" id="btn-toggle-watching" onclick="toggleDetailAction('watching')"></button>
+    </div>
+    <button class="btn primary block" id="btn-watch-movie" onclick="watchMovieFromDetail()" style="margin-top:10px">▶ Посмотреть в Telegram</button>
+    <div id="admin-controls" style="display:none">
+      <button class="btn glass block" id="btn-edit-date" onclick="editDateFromDetail()">Изменить дату стрима</button>
+      <button class="btn danger block" onclick="deleteMovieFromDetail()">Удалить фильм из базы</button>
+    </div>
+  </div>
+</div>
+
+<!-- НАВИГАЦИЯ -->
+<div class="dock" id="bottom-nav">
+  <button class="nav active" id="nav-catalog" onclick="switchNav('catalog')">
+    <svg width="18" height="18" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16"/></svg>
+    <span>Каталог</span>
+  </button>
+  <button class="nav" id="nav-watching" onclick="switchNav('watching')">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+    <span>Смотрю</span>
+  </button>
+  <button class="nav" id="nav-stats" onclick="switchNav('stats')">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+    <span>Стата</span>
+  </button>
+  <button class="nav" id="nav-guests" onclick="switchNav('guests')" style="display:none">
+    <svg width="18" height="18" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5M18 20a6 6 0 0 0-3-5.2"/></svg>
+    <span>Гости</span>
+  </button>
+  <button class="nav" id="nav-clear" onclick="clearChat()">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+    <span>Очистить</span>
+  </button>
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+try {
+  tg?.ready();
+  tg?.expand();
+  tg?.setHeaderColor?.('#0a1022');
+  tg?.setBackgroundColor?.('#0a1022');
+} catch (e) {}
+
+const urlParams = new URLSearchParams(window.location.search);
+let userId = tg?.initDataUnsafe?.user?.id || parseInt(urlParams.get('user_id')) || parseInt(localStorage.getItem('cached_uid')) || 0;
+if (userId > 0) localStorage.setItem('cached_uid', userId);
+
+const openPid = parseInt(urlParams.get('open_pid')) || null;
+const initialFolder = urlParams.get('folder') || 'zubarev';
+
+let currentFolder = initialFolder === 'movies' ? 'movies' : 'zubarev';
+let currentCategory = 'ALL';
+let currentMovie = null;
+let currentActiveGuestId = null;
+let previousView = 'view-catalog';
+let searchTimeout = null;
+let isAdminUser = false;
+let statsData = { total_z: 0, total_m: 0, watched_z: 0, watched_m: 0, total_watched: 0 };
+
+let currentFilteredList = [];
+let renderIndex = 0;
+const CHUNK_SIZE = 30;
+
+const catsZubarev = ["Все фильмы","Марвел / DC","Фэнтези","Комедия","Ужасы / Триллер","Драма / Детектив","Боевик / Экшен","Мультфильмы","Шоу","IRL / Стримы","По дате стрима"];
+const catsMovies  = ["Все фильмы","Боевик","Комедия","Ужасы / Триллер","Драма / Мелодрама","Фантастика / Фэнтези","Мультфильмы / Аниме","Детектив / Криминал","Приключения / Семейный","Биография / История","Разное"];
+
+const HDRS = { 
+  "ngrok-skip-browser-warning": "69420",
+  ...(tg?.initData ? { "X-Telegram-Init-Data": tg.initData } : {})
+};
+const JHDRS = { 
+  'Content-Type': 'application/json', 
+  "ngrok-skip-browser-warning": "69420",
+  ...(tg?.initData ? { "X-Telegram-Init-Data": tg.initData } : {})
+};
+
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function haptic(type = 'light'){
+  try {
+    if (type === 'success' || type === 'error' || type === 'warning') tg?.HapticFeedback?.notificationOccurred(type);
+    else tg?.HapticFeedback?.impactOccurred(type);
+  } catch(e){}
+}
+
+function plural(n, one, two, five) {
+  n = Math.abs(n) % 100;
+  const n1 = n % 10;
+  if (n > 10 && n < 20) return five;
+  if (n1 > 1 && n1 < 5) return two;
+  if (n1 === 1) return one;
+  return five;
+}
+
+function formatDate(d){
+  if(!d || d === '0000-00-00' || d === 'None') return '';
+  const p = d.split('-');
+  return p.length === 3 ? `${p[2]}.${p[1]}.${p[0]}` : d;
+}
+
+if (tg?.BackButton) {
+  tg.BackButton.onClick(() => {
+    const isGuestDetail = document.getElementById('view-guest-detail').classList.contains('active');
+    const isDetail = document.getElementById('view-detail').classList.contains('active');
+    if (isGuestDetail) closeGuestDetail();
+    else if (isDetail) closeDetail();
+  });
+}
+
+function switchView(viewId){
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  const target = document.getElementById(viewId);
+  if (target) target.classList.add('active');
+  
+  const detail = (viewId === 'view-detail' || viewId === 'view-guest-detail');
+  document.getElementById('bottom-nav').style.display = detail ? 'none' : 'flex';
+  document.getElementById('topbar').style.display = detail ? 'none' : 'flex';
+  
+  if (detail) {
+    tg?.BackButton?.show();
+  } else {
+    tg?.BackButton?.hide();
+    previousView = viewId;
+  }
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function switchNav(nav){
+  haptic();
+  document.querySelectorAll('.nav').forEach(el => el.classList.remove('active'));
+  document.getElementById(`nav-${nav}`)?.classList.add('active');
+  
+  if (nav === 'catalog') {
+    switchView('view-catalog');
+  } else if (nav === 'watching') {
+    loadWatching();
+    switchView('view-watching');
+  } else if (nav === 'stats') {
+    loadStats();
+    switchView('view-stats');
+  } else if (nav === 'guests') {
+    loadGuests();
+    switchView('view-guests');
+  }
+}
+
+function switchFolder(folder){
+  haptic();
+  if (currentFolder === folder) return;
+  currentFolder = folder;
+  currentCategory = 'ALL';
+  
+  document.getElementById('seg-zubarev').className = 'btn ' + (folder === 'zubarev' ? 'primary' : 'ghost');
+  document.getElementById('seg-movies').className  = 'btn ' + (folder === 'movies' ? 'primary' : 'ghost');
+  
+  updateHeroCount();
+  renderCategories();
+  loadMovies();
+}
+
+function updateHeroCount(){
+  const count = currentFolder === 'zubarev' ? (statsData.total_z || 0) : (statsData.total_m || 0);
+  const heroEl = document.getElementById('hero-count');
+  if (heroEl) heroEl.textContent = `${count} ${plural(count, 'запись', 'записи', 'записей')}`;
+}
+
+function onSearchInput(){
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(loadMovies, 220);
+}
+
+function renderCategories(){
+  const box = document.getElementById('chips');
+  box.innerHTML = '';
+  const list = currentFolder === 'zubarev' ? catsZubarev : catsMovies;
+  list.forEach(name => {
+    const code = name === "Все фильмы" ? 'ALL' : (name === "По дате стрима" ? 'DATE' : name);
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (currentCategory === code ? ' active' : '');
+    chip.textContent = name;
+    chip.dataset.code = code;
+    chip.onclick = () => { 
+      haptic();
+      currentCategory = (currentCategory === code && code !== 'ALL') ? 'ALL' : code;
+      box.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.code === currentCategory));
+      loadMovies(); 
+    };
+    box.appendChild(chip);
+  });
+}
+
+function movieCard(m){
+  const card = document.createElement('button');
+  card.className = 'row';
+  const date = m.date && m.date !== '0000-00-00' ? `<div class="date">СТРИМ · ${formatDate(m.date)}</div>` : '';
+  const badge = m.is_watching ? '<span class="badge">Смотрю</span>' : '';
+  const folder = m.folder || currentFolder;
+  
+  card.innerHTML = `
+    <div class="tile">
+      <svg width="24" height="24" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="14" rx="2"/><path d="m4 6 3-3 3 3M12 6l3-3 3 3"/></svg>
+    </div>
+    <div class="body">
+      <div class="title">${esc(m.title)}${badge}</div>
+      <div class="meta">${m.year ? esc(m.year) : '—'} · ${esc(m.cat || m.category || 'Разное')}</div>
+      ${date}
+    </div>
+    <div class="mark-end${m.is_watched ? ' on' : ''}">${m.is_watched ? '✓' : '›'}</div>`;
+  card.onclick = () => openDetail(m.pid, folder);
+  return card;
+}
+
+function emptyBox(text){
+  const d = document.createElement('div');
+  d.className = 'empty';
+  d.style.gridColumn = '1 / -1';
+  d.textContent = text;
+  return d;
+}
+
+function applyClientFilter(movies, category, search) {
+  let res = movies;
+  if (category === 'DATE') {
+    res = [...res].sort((a, b) => {
+      const da = a.date && a.date !== '0000-00-00' ? a.date : '';
+      const db = b.date && b.date !== '0000-00-00' ? b.date : '';
+      return db.localeCompare(da);
+    });
+  } else if (category && category !== 'ALL') {
+    const tokens = category.toLowerCase().split(/[\s/]+/).filter(t => t.length > 1);
+    res = res.filter(m => {
+      const catStr = ((m.cat || m.category || '') + ' ' + (m.genres || '')).toLowerCase();
+      return tokens.some(tok => catStr.includes(tok));
+    });
+  }
+  if (search) {
+    const s = search.toLowerCase();
+    res = res.filter(m => {
+      const t = (m.title || '').toLowerCase();
+      const y = String(m.year || '');
+      const c = ((m.cat || m.category || '') + ' ' + (m.genres || '')).toLowerCase();
+      return t.includes(s) || y.includes(s) || c.includes(s);
+    });
+  }
+  return res;
+}
+
+function renderNextChunk(){
+  const list = document.getElementById('movies-list');
+  if (!list) return;
+  const nextSlice = currentFilteredList.slice(renderIndex, renderIndex + CHUNK_SIZE);
+  if (nextSlice.length === 0) return;
+  const frag = document.createDocumentFragment();
+  nextSlice.forEach(m => frag.appendChild(movieCard(m)));
+  list.appendChild(frag);
+  renderIndex += nextSlice.length;
+}
+
+window.addEventListener('scroll', () => {
+  const viewCatalog = document.getElementById('view-catalog');
+  if (!viewCatalog || !viewCatalog.classList.contains('active')) return;
+  if (renderIndex < currentFilteredList.length) {
+    if (window.innerHeight + window.scrollY >= document.documentElement.offsetHeight - 400) {
+      renderNextChunk();
+    }
+  }
+}, { passive: true });
+
+async function loadMovies(){
+  const search = document.getElementById('search').value.trim();
+  const list = document.getElementById('movies-list');
+  try {
+    const res = await fetch(`/api/movies?folder=${currentFolder}&category=${encodeURIComponent(currentCategory)}&search=${encodeURIComponent(search)}&user_id=${userId}`, { headers: HDRS });
+    let movies = await res.json();
+    
+    if (Array.isArray(movies)) {
+      if (currentCategory !== 'ALL' && movies.length === 0) {
+        const fallbackRes = await fetch(`/api/movies?folder=${currentFolder}&category=ALL&search=&user_id=${userId}`, { headers: HDRS });
+        const all = await fallbackRes.json();
+        if (Array.isArray(all) && all.length > 0) {
+          movies = applyClientFilter(all, currentCategory, search);
+        }
+      }
+    } else {
+      movies = [];
+    }
+
+    currentFilteredList = movies;
+    renderIndex = 0;
+    list.innerHTML = '';
+    
+    const countEl = document.getElementById('catalog-count');
+    if (countEl) countEl.textContent = `${movies.length} найдено`;
+
+    if (!movies || !movies.length) { 
+      list.appendChild(emptyBox('Ничего не найдено')); 
+      return; 
+    }
+    renderNextChunk();
+  } catch(e) {
+    list.innerHTML = ''; 
+    list.appendChild(emptyBox('Не удалось загрузить каталог'));
+  }
+}
+
+async function loadWatching(){
+  const list = document.getElementById('watching-list');
+  try {
+    const res = await fetch(`/api/watching?user_id=${userId}`, { headers: HDRS });
+    const movies = await res.json();
+    list.innerHTML = '';
+    document.getElementById('watching-sub').textContent = `${movies?.length || 0} фильмов`;
+    if (!movies || !movies.length) { 
+      list.appendChild(emptyBox('В списке пока ничего нет')); 
+      return; 
+    }
+    const frag = document.createDocumentFragment();
+    movies.forEach(m => frag.appendChild(movieCard(m)));
+    list.appendChild(frag);
+  } catch(e) { 
+    list.innerHTML = ''; 
+    list.appendChild(emptyBox('Ошибка загрузки')); 
+  }
+}
+
+async function loadStats(){
+  try {
+    const res = await fetch(`/api/stats?user_id=${userId}`, { headers: HDRS });
+    const s = await res.json();
+    statsData = s;
+    if (s.is_admin) {
+      isAdminUser = true;
+      document.getElementById('nav-guests').style.display = 'flex';
+    }
+    updateHeroCount();
+    
+    const pct = (a, b) => b ? Math.min(100, Math.round(a / b * 100)) : 0;
+    document.getElementById('stats-content').innerHTML = `
+      <div class="panel stat">
+        <div class="mut" style="font-size:12px">С Зубаревым</div>
+        <div class="num">${s.watched_z || 0}</div>
+        <div class="bar"><i style="width:${pct(s.watched_z, s.total_z)}%"></i></div>
+        <div class="tiny mut">из ${s.total_z || 0} (${pct(s.watched_z, s.total_z)}%)</div>
+      </div>
+      <div class="panel stat">
+        <div class="mut" style="font-size:12px">Обычные</div>
+        <div class="num">${s.watched_m || 0}</div>
+        <div class="bar"><i style="width:${pct(s.watched_m, s.total_m)}%"></i></div>
+        <div class="tiny mut">из ${s.total_m || 0} (${pct(s.watched_m, s.total_m)}%)</div>
+      </div>
+      <div class="panel stat" style="grid-column:1/-1;min-height:0;border-color:rgba(165,139,255,.5)">
+        <div class="num">${s.total_watched || 0}</div>
+        <div class="mut" style="font-size:13px">Всего просмотрено фильмов</div>
+      </div>`;
+  } catch(e) {}
+}
+
+async function openDetail(pid, folder = currentFolder){
+  haptic();
+  try {
+    const res = await fetch(`/api/movie?pid=${pid}&folder=${folder}&user_id=${userId}`, { headers: HDRS });
+    currentMovie = await res.json();
+    if (!currentMovie || currentMovie.error) {
+      alert("Фильм не найден.");
+      return;
+    }
+  } catch(e) { 
+    alert("Ошибка загрузки деталей фильма."); 
+    return; 
+  }
+
+  document.getElementById('d-folder').textContent = currentMovie.folder === 'zubarev' ? 'Фильмы Зубарева' : 'Обычные фильмы';
+  document.getElementById('d-title').textContent = currentMovie.title;
+  
+  const bits = [];
+  if (currentMovie.year) bits.push(currentMovie.year);
+  if (currentMovie.category) bits.push(currentMovie.category);
+  if (currentMovie.genres && currentMovie.genres !== 'Неизвестно') bits.push(currentMovie.genres);
+  if (currentMovie.date && currentMovie.date !== '0000-00-00') bits.push('стрим ' + formatDate(currentMovie.date));
+  document.getElementById('d-info').textContent = bits.join(' · ');
+  
+  updateDetailButtons();
+  
+  const adminBox = document.getElementById('admin-controls');
+  if (currentMovie.is_admin || isAdminUser) {
+    adminBox.style.display = 'block';
+    document.getElementById('btn-edit-date').style.display = currentMovie.folder === 'zubarev' ? 'flex' : 'none';
+  } else {
+    adminBox.style.display = 'none';
+  }
+  
+  switchView('view-detail');
+}
+
+function updateDetailButtons(){
+  document.getElementById('btn-toggle-watched').textContent = currentMovie.is_watched ? "✓ Просмотрено" : "Отметить просмотренным";
+  document.getElementById('btn-toggle-watching').textContent = currentMovie.is_watching ? "Убрать из «Смотрю»" : "Добавить в «Смотрю»";
+}
+
+async function toggleDetailAction(action){
+  haptic();
+  try {
+    const res = await fetch('/api/action', { 
+      method:'POST', 
+      headers: JHDRS,
+      body: JSON.stringify({ user_id: userId, pid: currentMovie.pid, folder: currentMovie.folder, action }) 
+    });
+    const data = await res.json();
+    if (action === 'watched') currentMovie.is_watched = data.active;
+    if (action === 'watching') currentMovie.is_watching = data.active;
+    updateDetailButtons();
+  } catch(e) { 
+    alert("Ошибка сети."); 
+  }
+}
+
+async function watchMovieFromDetail(){
+  haptic();
+  const btn = document.getElementById('btn-watch-movie');
+  const origText = btn.textContent;
+  btn.textContent = "Загрузка…"; 
+  btn.disabled = true;
+  
+  try {
+    const res = await fetch('/api/watch', { 
+      method:'POST', 
+      headers: JHDRS, 
+      body: JSON.stringify({ pid: currentMovie.pid, folder: currentMovie.folder, user_id: userId }) 
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      tg?.close();
+    } else {
+      alert(data.message || "Не удалось отправить фильм.");
+      btn.textContent = origText;
+      btn.disabled = false;
+    }
+  } catch(e) { 
+    console.error(e);
+    tg?.close();
+  }
+}
+
+async function deleteMovieFromDetail(){
+  haptic('warning');
+  if (!confirm(`Точно удалить «${currentMovie.title}» из базы?`)) return;
+  try {
+    const res = await fetch('/api/delete_movie', { 
+      method:'POST', 
+      headers: JHDRS, 
+      body: JSON.stringify({ pid: currentMovie.pid, folder: currentMovie.folder, user_id: userId }) 
+    });
+    const data = await res.json();
+    if (data.status === 'ok') { 
+      haptic('success');
+      alert("Фильм успешно удален!"); 
+      closeDetail(); 
+      loadMovies(); 
+      loadStats();
+    } else {
+      alert(data.message || "Ошибка при удалении.");
+    }
+  } catch(e) { 
+    alert("Ошибка сети."); 
+  }
+}
+
+async function editDateFromDetail(){
+  haptic();
+  const newDate = prompt("Введи новую дату стрима (например: 15.08.2024):", formatDate(currentMovie.date));
+  if (!newDate) return;
+  try {
+    const res = await fetch('/api/edit_date', { 
+      method:'POST', 
+      headers: JHDRS, 
+      body: JSON.stringify({ pid: currentMovie.pid, folder: currentMovie.folder, user_id: userId, date: newDate.trim() }) 
+    });
+    const data = await res.json();
+    if (data.status === 'ok') { 
+      haptic('success');
+      currentMovie.date = data.date; 
+      openDetail(currentMovie.pid, currentMovie.folder); 
+    } else {
+      alert(data.message || "Ошибка сохранения даты.");
+    }
+  } catch(e) { 
+    alert("Ошибка сохранения даты."); 
+  }
+}
+
+async function clearChat(){
+  haptic('warning');
+  if (!confirm("Очистить историю сообщений с ботом?\nОстанется только кнопка запуска каталога.")) return;
+  try {
+    const res = await fetch('/api/clear_chat', { 
+      method:'POST', 
+      headers: JHDRS, 
+      body: JSON.stringify({ user_id: userId }) 
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      haptic('success');
+      alert("Чат полностью очищен!");
+      tg?.close();
+    } else {
+      alert("Не удалось очистить чат.");
+    }
+  } catch(e) { 
+    alert("Ошибка сети при очистке чата."); 
+  }
+}
+
+async function loadGuests(){
+  const list = document.getElementById('guests-list');
+  try {
+    const res = await fetch(`/api/guests?user_id=${userId}`, { headers: HDRS });
+    const guests = await res.json();
+    list.innerHTML = '';
+    if (!guests || !guests.length) { 
+      list.appendChild(emptyBox('Пользователей пока нет')); 
+      return; 
+    }
+    const frag = document.createDocumentFragment();
+    guests.forEach(g => {
+      const card = document.createElement('button');
+      card.className = 'row'; 
+      card.style.marginBottom = '8px';
+      const uname = g.username ? `@${esc(g.username)}` : 'без @username';
+      card.innerHTML = `
+        <div class="tile"><svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></div>
+        <div class="body">
+          <div class="title">${esc(g.name || 'Пользователь')} <span class="mut" style="font-size:12px">${uname}</span></div>
+          <div class="meta">Просмотрено ${g.watched || 0} · В списке ${g.watching || 0} · ID ${g.user_id}</div>
+        </div>
+        <span class="pill">${esc(g.status || 'USER')}</span>`;
+      card.onclick = () => openGuestDetail(g.user_id);
+      frag.appendChild(card);
+    });
+    list.appendChild(frag);
+  } catch(e) { 
+    list.innerHTML = ''; 
+    list.appendChild(emptyBox('Ошибка загрузки')); 
+  }
+}
+
+async function openGuestDetail(targetId){
+  haptic();
+  currentActiveGuestId = targetId;
+  document.getElementById('guest-msg-input').value = '';
+  let g;
+  try {
+    const res = await fetch(`/api/guest_detail?user_id=${userId}&target_id=${targetId}`, { headers: HDRS });
+    g = await res.json();
+  } catch(e) { 
+    alert("Не удалось загрузить карточку гостя."); 
+    return; 
+  }
+
+  const uname = g.username ? `@${esc(g.username)}` : 'без @username';
+  document.getElementById('guest-card-info').innerHTML = `
+    <div class="sec-label">Профиль гостя</div>
+    <div class="display" style="font-size:32px;line-height:1;margin:4px 0">${esc(g.name || 'Пользователь')}</div>
+    <div class="mut" style="font-size:13px">${uname} · ID ${g.user_id} · с ${esc(g.registered || '—')}</div>
+    <div class="grid" style="grid-template-columns:1fr 1fr 1fr;margin-top:14px">
+      <div class="panel" style="text-align:center;padding:10px"><div class="display" style="font-size:26px">${g.watched_z || 0}</div><div class="tiny mut">Зубарев</div></div>
+      <div class="panel" style="text-align:center;padding:10px"><div class="display" style="font-size:26px">${g.watched_m || 0}</div><div class="tiny mut">Обычные</div></div>
+      <div class="panel" style="text-align:center;padding:10px"><div class="display" style="font-size:26px">${g.watching_count || g.watching || 0}</div><div class="tiny mut">Смотрю</div></div>
+    </div>`;
+
+  const logsList = document.getElementById('guest-logs-list');
+  logsList.innerHTML = '';
+  if (!g.logs || !g.logs.length) { 
+    logsList.appendChild(emptyBox('Логов пока нет')); 
+  } else {
+    const frag = document.createDocumentFragment();
+    g.logs.forEach(l => {
+      const item = document.createElement('div');
+      item.className = 'log';
+      item.innerHTML = `<div class="t">${esc(l.time)}</div><div class="a">${esc(l.action)}</div>${l.details ? `<div class="d">${esc(l.details)}</div>` : ''}`;
+      frag.appendChild(item);
+    });
+    logsList.appendChild(frag);
+  }
+  switchView('view-guest-detail');
+}
+
+async function sendMsgToGuest(){
+  haptic();
+  const input = document.getElementById('guest-msg-input');
+  const text = input.value.trim();
+  if (!text) { alert("Введи текст сообщения!"); return; }
+  const btn = document.getElementById('btn-send-guest-msg');
+  const orig = btn.textContent;
+  btn.textContent = "Отправляю…"; 
+  btn.disabled = true;
+  
+  try {
+    const res = await fetch('/api/send_guest_message', { 
+      method:'POST', 
+      headers: JHDRS,
+      body: JSON.stringify({ user_id: userId, target_id: currentActiveGuestId, text }) 
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      haptic('success');
+      alert("Сообщение успешно доставлено гостю от лица бота!");
+      input.value = '';
+      openGuestDetail(currentActiveGuestId);
+    } else {
+      alert(`Не удалось отправить: ${data.message || 'Ошибка'}`);
+    }
+  } catch(e) { 
+    alert("Ошибка соединения с сервером."); 
+  } finally { 
+    btn.textContent = orig; 
+    btn.disabled = false; 
+  }
+}
+
+function closeGuestDetail(){ 
+  haptic(); 
+  switchNav('guests'); 
+}
+
+function closeDetail(){
+  haptic();
+  switchView(previousView || 'view-catalog');
+  if (previousView === 'view-catalog') loadMovies();
+  else if (previousView === 'view-watching') loadWatching();
+  else if (previousView === 'view-stats') loadStats();
+}
+
+renderCategories();
+loadMovies();
+loadStats();
+
+if (openPid) {
+  openDetail(openPid, initialFolder);
+}
+</script>
+</body>
+</html>
