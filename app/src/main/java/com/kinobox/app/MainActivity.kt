@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
+import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -25,22 +26,23 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Копируем файлы окружения в изолированное хранилище
-        copyAssetToFiles("tracker.db")
-        copyAssetToFiles("my_session.session")
-        copyAssetToFiles(".env")
+        // Копируем базу, сессию и интерфейс во внутреннее хранилище
+        copyAssetToFile("tracker.db")
+        copyAssetToFile("my_session.session")
+        copyAssetToFile(".env")
+        copyAssetToFile("index.html")
 
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(this))
         }
 
-        // Запуск Python aiohttp стримера в фоне
+        // Запуск Python сервера в фоне
         thread(isDaemon = true) {
             try {
                 val py = Python.getInstance()
                 py.getModule("server").callAttr("start_server_main", filesDir.absolutePath)
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("KinoboxPy", "Ошибка запуска Python: ${e.message}", e)
             }
         }
 
@@ -62,23 +64,27 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // Даем серверу 2 секунды на инициализацию Pyrogram и открываем каталог
+        // Даем серверу время на старт и открываем каталог
         webView.postDelayed({
             webView.loadUrl("http://127.0.0.1:8080")
         }, 2000)
     }
 
-    private fun copyAssetToFiles(fileName: String) {
-        val dest = File(filesDir, fileName)
-        if (!dest.exists()) {
-            try {
-                val pyModule = File(filesDir, "chaquopy/AssetFinder/app/$fileName")
-                if (pyModule.exists()) {
-                    pyModule.copyTo(dest, overwrite = true)
+    private fun copyAssetToFile(fileName: String) {
+        try {
+            val dest = File(filesDir, fileName)
+            assets.open(fileName).use { input ->
+                val assetSize = input.available().toLong()
+                if (!dest.exists() || dest.length() != assetSize) {
+                    dest.parentFile?.mkdirs()
+                    FileOutputStream(dest).use { output ->
+                        input.copyTo(output)
+                    }
+                    Log.d("KinoboxAsset", "Скопирован $fileName (${dest.length()} байт)")
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
+        } catch (e: Exception) {
+            Log.e("KinoboxAsset", "Ошибка копирования $fileName: ${e.message}")
         }
     }
 
@@ -96,11 +102,10 @@ class MainActivity : AppCompatActivity() {
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
             override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
-                view?.postDelayed({ view.reload() }, 1000)
+                view?.postDelayed({ view.reload() }, 1500)
             }
         }
 
-        // Мост для вызова нативного плеера по клику из JS
         webView.addJavascriptInterface(object {
             @JavascriptInterface
             fun openPlayer(pid: Int) {
