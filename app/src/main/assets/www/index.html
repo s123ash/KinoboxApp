@@ -2,9 +2,81 @@
 <html lang="ru">
 <head>
 
+<script id="kinobox-fetch-interceptor">
+(function() {
+    console.log("[Kinobox Bridge] Инициализация перехватчика API");
+    const originalFetch = window.fetch;
+    window.fetch = async function(resource, init) {
+        let url = typeof resource === "string" ? resource : (resource && resource.url ? resource.url : "");
+        if (url.includes("/api/")) {
+            try {
+                let fullUrl = url.startsWith("http") ? url : "http://localhost" + (url.startsWith("/") ? "" : "/") + url;
+                let parsed = new URL(fullUrl);
+                let path = parsed.pathname;
+
+                if (path === "/api/movies") {
+                    let folder = parsed.searchParams.get("folder") || "";
+                    let category = parsed.searchParams.get("category") || "ALL";
+                    let search = parsed.searchParams.get("search") || "";
+                    let raw = "[]";
+                    if (window.Android && window.Android.getMoviesFiltered) {
+                        raw = window.Android.getMoviesFiltered(folder, category, search);
+                    }
+                    return new Response(raw, {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+
+                if (path === "/api/stats") {
+                    let raw = "{"total":0,"watched":0}";
+                    if (window.Android && window.Android.getStats) {
+                        raw = window.Android.getStats();
+                    }
+                    return new Response(raw, {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+
+                if (path === "/api/movie") {
+                    let pid = parsed.searchParams.get("pid") || parsed.searchParams.get("id") || "";
+                    let raw = "{}";
+                    if (window.Android && window.Android.getSingleMovie) {
+                        raw = window.Android.getSingleMovie(pid);
+                    }
+                    return new Response(raw, {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+
+                if (path === "/api/watching") {
+                    return new Response(JSON.stringify([]), {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+
+                if (path === "/api/action" || path === "/api/watch") {
+                    return new Response(JSON.stringify({ status: "ok" }), {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+            } catch(e) {
+                console.error("[Kinobox Bridge] Ошибка перехвата:", e);
+            }
+        }
+        return originalFetch.apply(this, arguments);
+    };
+})();
+</script>
+
+
 <script>
 // Автономный мост между Android и WebApp
-window.loadKinoboxMovies = function() {
+// removed
     if (window.Android && window.Android.getMovies) {
         try {
             var raw = window.Android.getMovies();

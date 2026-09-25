@@ -8,7 +8,22 @@ class WebAppBridge(private val context: Context, private val dbHelper: DatabaseH
 
     @JavascriptInterface
     fun getMovies(): String {
-        return dbHelper.getAllMoviesJson()
+        return dbHelper.getMoviesFiltered("all", "ALL", "")
+    }
+
+    @JavascriptInterface
+    fun getMoviesFiltered(folder: String?, category: String?, search: String?): String {
+        return dbHelper.getMoviesFiltered(folder, category, search)
+    }
+
+    @JavascriptInterface
+    fun getSingleMovie(pid: String?): String {
+        return dbHelper.getSingleMovie(pid)
+    }
+
+    @JavascriptInterface
+    fun getStats(): String {
+        return dbHelper.getStats()
     }
 
     @JavascriptInterface
