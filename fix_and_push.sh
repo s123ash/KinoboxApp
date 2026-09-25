@@ -1,3 +1,28 @@
+#!/bin/bash
+set -e
+
+echo "=== 1. ИЗВЛЕЧЕНИЕ КЛЮЧЕЙ ИЗ CONFIG.PY ==="
+python3 -c '
+import re
+api_id = ""
+api_hash = ""
+try:
+    with open("app/src/main/python/config.py", "r", encoding="utf-8") as f:
+        c = f.read()
+    m_id = re.search(r"API_ID\s*=\s*(\d+)", c)
+    m_hash = re.search(r"API_HASH\s*=\s*[\x27\"]([^\x27\"]+)[\x27\"]", c)
+    if m_id: api_id = m_id.group(1)
+    if m_hash: api_hash = m_hash.group(1)
+except Exception as e:
+    print("Ошибка чтения config.py:", e)
+
+with open("app/src/main/python/tg_creds.py", "w", encoding="utf-8") as f:
+    f.write(f"ADMIN_ID = 846768993\nAPI_ID = {api_id or 0}\nAPI_HASH = \"{api_hash}\"\n")
+print(f"✓ tg_creds.py записан (ADMIN_ID: 846768993, API_ID: {api_id})")
+'
+
+echo "=== 2. СБОРКА БОЕВОГО SERVER.PY БЕЗ СИНТАКСИЧЕСКИХ ОШИБОК ==="
+cat << 'PYEOF' > app/src/main/python/server.py
 import os
 import sys
 import asyncio
@@ -280,3 +305,50 @@ def start_server_main(app_files_dir):
     app = web.Application()
     app.add_routes(routes)
     web.run_app(app, host="127.0.0.1", port=8080, loop=loop, handle_signals=False)
+PYEOF
+
+echo "=== 3. ПРОВЕРКА СИНТАКСИСА PYTHON ==="
+python3 -m py_compile app/src/main/python/server.py
+echo "✓ server.py полностью валиден, синтаксических ошибок нет"
+
+echo "=== 4. ПРОВЕРКА РАЗРЕШЕНИЙ В ANDROIDMANIFEST ==="
+python3 -c '
+path = "app/src/main/AndroidManifest.xml"
+with open(path, "r", encoding="utf-8") as f:
+    m = f.read()
+
+changed = False
+if "android:usesCleartextTraffic=\"true\"" not in m:
+    m = m.replace("<application", "<application\n        android:usesCleartextTraffic=\"true\"", 1)
+    changed = True
+
+if "android.permission.INTERNET" not in m:
+    m = m.replace("<manifest", "<manifest\n    <uses-permission android:name=\"android.permission.INTERNET\" />", 1)
+    changed = True
+
+if changed:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(m)
+    print("✓ Добавлены разрешения INTERNET и usesCleartextTraffic в AndroidManifest")
+else:
+    print("✓ AndroidManifest уже содержит все необходимые разрешения")
+'
+
+echo "=== 5. СИНХРОНИЗАЦИЯ ASSETS ==="
+mkdir -p app/src/main/assets
+cp app/src/main/python/tracker.db app/src/main/assets/tracker.db
+cp app/src/main/python/my_session.session app/src/main/assets/my_session.session
+cp app/src/main/python/index.html app/src/main/assets/index.html
+
+echo "=== 6. ФИКСАЦИЯ И ОТПРАВКА В РЕПОЗИТОРИЙ ==="
+git add .
+git commit -m "Fix: stable head decorator, cleartext traffic and async telegram init"
+git push
+
+echo "=== 7. ОТСЛЕЖИВАНИЕ СБОРКИ В РЕАЛЬНОМ ВРЕМЕНИ ==="
+if command -v gh &> /dev/null; then
+    gh run watch || true
+else
+    echo "Утилита gh не установлена. Отслеживание доступно по ссылке:"
+    echo "https://github.com/s123ash/KinoboxApp/actions"
+fi
