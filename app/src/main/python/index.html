@@ -2,6 +2,27 @@
 <html lang="ru">
 <head>
 
+<script id="native-player-hook">
+(function() {
+    const origFetch = window.fetch;
+    window.fetch = async function(resource, init) {
+        let url = typeof resource === "string" ? resource : (resource && resource.url ? resource.url : "");
+        if (url.includes("/api/watch")) {
+            try {
+                if (init && init.body) {
+                    let b = JSON.parse(init.body);
+                    if (b.pid && window.KinoboxNative && window.KinoboxNative.openPlayer) {
+                        window.KinoboxNative.openPlayer(parseInt(b.pid));
+                    }
+                }
+            } catch(e) {}
+        }
+        return origFetch.apply(this, arguments);
+    };
+})();
+</script>
+
+
 <script>
 window.addEventListener("DOMContentLoaded", function() {
     document.addEventListener("click", function(e) {
