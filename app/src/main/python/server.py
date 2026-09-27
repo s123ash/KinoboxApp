@@ -5,29 +5,15 @@ import sqlite3
 import re
 from aiohttp import web
 
-work_dir = os.path.dirname(os.path.abspath(__file__))
-if work_dir not in sys.path:
-    sys.path.insert(0, work_dir)
-
-db_path = os.path.join(work_dir, "tracker.db")
 routes = web.RouteTableDef()
 pyro_client = None
 
-# Читаем ключи из env.txt (переименованный .env)
+work_dir = os.path.dirname(os.path.abspath(__file__))
+db_path = os.path.join(work_dir, "tracker.db")
+
 API_ID = None
 API_HASH = None
 ADMIN_ID = 846768993
-
-env_path = os.path.join(work_dir, "env.txt")
-if os.path.exists(env_path):
-    with open(env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("API_ID="):
-                try: API_ID = int(line.split("=", 1)[1])
-                except: pass
-            elif line.startswith("API_HASH="):
-                API_HASH = line.split("=", 1)[1].strip("'\"")
 
 def get_raw_db():
     return sqlite3.connect(db_path)
@@ -209,21 +195,23 @@ async def get_parts(request):
         parts.append({"part": 1, "msg_id": int(mid), "size": 0})
     return web.json_response({"pid": pid, "title": title, "channel_id": cid, "parts": parts})
 
-@routes.head("/stream")
 @routes.get("/stream")
 async def stream_handler(request):
     cid = request.query.get("channel_id", "@zubszu")
     mid = int(request.query.get("msg_id", "0"))
     global pyro_client
-    if not pyro_client or not pyro_client.is_connected:
-        return web.Response(text="Telegram не подключен", status=503)
+
+    if not pyro_client:
+        return web.Response(text="Telegram-клиент не инициализирован (нет API_ID/API_HASH)", status=503)
+    if not pyro_client.is_connected:
+        return web.Response(text="Telegram не подключен (проверьте VPN/сеть, см. логи сервера)", status=503)
 
     chat = int(cid) if str(cid).lstrip("-").isdigit() else cid
     try:
         msg = await pyro_client.get_messages(chat, mid)
     except Exception:
         return web.Response(text="Сообщение не найдено", status=404)
-        
+
     media = msg.video or msg.document
     if not media: return web.Response(text="Медиа не найдено", status=404)
 
@@ -246,7 +234,7 @@ async def stream_handler(request):
     })
     await res.prepare(request)
 
-    csize = 1024 * 1024
+    csize = 512 * 1024
     schunk = start // csize
     fskip = start % csize
     sent = 0
@@ -258,6 +246,7 @@ async def stream_handler(request):
             if sent + len(chunk) > clen:
                 chunk = chunk[:clen - sent]
             await res.write(chunk)
+            await res.drain()
             sent += len(chunk)
             if sent >= clen: break
     except Exception:
@@ -266,33 +255,57 @@ async def stream_handler(request):
 
 async def connect_tg_in_background():
     global pyro_client
+    print("[TG] Начинаю подключение к Telegram...")
     try:
-        await pyro_client.start()
+        await asyncio.wait_for(pyro_client.start(), timeout=15.0)
         print("✓ Telegram клиент успешно подключен в фоне")
+    except asyncio.TimeoutError:
+        print("✗ ТАЙМАУТ подключения к Telegram (15 сек)")
     except Exception as e:
-        print(f"✗ Ошибка подключения Telegram: {e}")
+        print(f"✗ Ошибка подключения Telegram: {type(e).__name__}: {e}")
 
 def start_server_main(app_files_dir):
-    global pyro_client, db_path, work_dir
+    global pyro_client, db_path, work_dir, API_ID, API_HASH, ADMIN_ID
     work_dir = app_files_dir
     db_path = os.path.join(work_dir, "tracker.db")
     sess_path = os.path.join(work_dir, "my_session")
 
+    env_path = os.path.join(work_dir, "env.txt")
+    print(f"[ENV] Ищу ключи по пути: {env_path}")
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("API_ID="):
+                    try: API_ID = int(line.split("=", 1)[1])
+                    except: pass
+                elif line.startswith("API_HASH="):
+                    API_HASH = line.split("=", 1)[1].strip("'\"")
+        print(f"[ENV] Прочитано: API_ID={API_ID}, API_HASH={'установлен' if API_HASH else 'ПУСТО'}")
+    else:
+        print(f"[ENV] Файл env.txt НЕ НАЙДЕН по пути {env_path}")
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    # 1. ЗАЩИТНЫЙ БЛОК: Инициализируем Telegram ТОЛЬКО если есть ключи
     try:
         if API_ID and API_HASH:
             from pyrogram import Client
             pyro_client = Client(sess_path, api_id=API_ID, api_hash=API_HASH)
             loop.create_task(connect_tg_in_background())
         else:
-            print("ВНИМАНИЕ: Нет API_ID/API_HASH в env.txt. Сервер работает в offline-режиме.")
+            print("ВНИМАНИЕ: Нет API_ID/API_HASH. Сервер работает в offline-режиме.")
     except Exception as e:
-        print(f"Критическая ошибка Pyrogram: {e}")
+        print(f"Критическая ошибка Pyrogram: {type(e).__name__}: {e}")
 
-    # 2. ГАРАНТИРОВАННЫЙ ЗАПУСК ВЕБ-СЕРВЕРА
     app = web.Application()
-    app.add_routes(routes)
-    web.run_app(app, host="127.0.0.1", port=8080, loop=loop, handle_signals=False)
+    try:
+        app.add_routes(routes)
+    except Exception as e:
+        print(f"✗ ОШИБКА РЕГИСТРАЦИИ МАРШРУТОВ: {type(e).__name__}: {e}")
+        return
+
+    try:
+        web.run_app(app, host="127.0.0.1", port=8080, loop=loop, handle_signals=False)
+    except OSError as e:
+        print(f"✗ НЕ УДАЛОСЬ ЗАПУСТИТЬ СЕРВЕР НА ПОРТУ 8080: {e}")

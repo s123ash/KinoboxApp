@@ -1,5 +1,6 @@
 package com.kinobox.app
 
+import androidx.media3.exoplayer.DefaultLoadControl
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -12,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import org.json.JSONObject
@@ -54,7 +56,27 @@ class PlayerActivity : AppCompatActivity() {
         root.addView(partsContainer)
         setContentView(root)
 
-        player = ExoPlayer.Builder(this).build()
+        // АГРЕССИВНЫЙ БУФЕР: начинаем показ уже через 400 мс после получения первого кадра
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                15_000, // Минимальный общий буфер 15 сек
+                50_000, // Максимальный буфер 50 сек
+                400,    // Старт воспроизведения: всего 400 мс данных!
+                1_000   // Возобновление после ребуферизации: 1 сек
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
+        player = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
+            .build()
+
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15000, 30000, 400, 1000)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+        player = ExoPlayer.Builder(this).setLoadControl(loadControl).build()
+
         playerView.player = player
         player?.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
@@ -100,8 +122,16 @@ class PlayerActivity : AppCompatActivity() {
                             partsContainer.addView(btn)
                         }
                     }
-                    if (parts.length() > 0) playStream(cid, parts.getJSONObject(0).getInt("msg_id"))
-                    else { statusText.text = "Видео не найдено"; progressBar.visibility = View.GONE }
+                    if (parts.length() > 0) {
+                        for (i in 0 until parts.length()) {
+                            val mid = parts.getJSONObject(i).getInt("msg_id")
+                            val uri = Uri.parse("http://127.0.0.1:8080/stream?channel_id=$cid&msg_id=$mid")
+                            player?.addMediaItem(MediaItem.fromUri(uri))
+                        }
+                        statusText.text = "Буферизация..."; statusText.visibility = View.VISIBLE; progressBar.visibility = View.VISIBLE
+                        player?.prepare()
+                        player?.play()
+                    } else { statusText.text = "Видео не найдено"; progressBar.visibility = View.GONE }
                 }
             } catch (e: Exception) {
                 runOnUiThread { statusText.text = "Сервер недоступен: ${e.message}"; progressBar.visibility = View.GONE }
